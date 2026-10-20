@@ -1,3 +1,20 @@
+          ELSE.
+*           Previous billing line not found.
+*           Exempt the outgoing HH register for an HH-to-NHH change.
+            IF gv_reversal EQ co_false.
+
+              IF lv_hh_to_nhh EQ abap_false
+                 OR lw_easts-tarifart NE 'RTP-MRT'.
+
+                mac_msg_putx co_msg_error '014' 'ZB'
+                  gw_data_collector-inst-use_inst-anlage
+                  lw_etdz-equnr lw_etdz-zwnummer
+                  space error_occurred.
+
+              ENDIF.
+
+            ENDIF.
+          ENDIF.
 * Detect HH to NHH transition at the meter-change date
 CLEAR: lv_hh_prevcheck, lv_nhh_check.
 
