@@ -1,0 +1,32 @@
+* Detect HH to NHH transition at the meter-change date
+CLEAR: lv_hh_prevcheck, lv_nhh_check.
+
+LOOP AT gw_data_collector-inst-ieasts INTO lw_easts
+  WHERE zwnabr EQ co_bill_relevant.
+
+* Previous HH register ends the day before the change
+  IF lw_easts-bis EQ lv_start_date
+     AND lw_easts-tarifart EQ 'RTP-MRT'.
+
+    lv_hh_prevcheck = lw_easts-tarifart.
+
+  ENDIF.
+
+* New NHH register starts on the change date
+  IF lw_easts-ab EQ p_erch-endabrpe
+     AND lw_easts-tarifart IS NOT INITIAL
+     AND lw_easts-tarifart NE 'RTP-MRT'.
+
+    lv_nhh_check = lw_easts-tarifart.
+
+  ENDIF.
+
+ENDLOOP.
+
+IF lv_hh_prevcheck EQ 'RTP-MRT'
+   AND lv_nhh_check IS NOT INITIAL
+   AND lv_nhh_check NE 'RTP-MRT'.
+
+  lv_meter_work = co_true.
+
+ENDIF.
