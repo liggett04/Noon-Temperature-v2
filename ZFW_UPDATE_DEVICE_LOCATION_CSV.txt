@@ -1,0 +1,950 @@
+*&---------------------------------------------------------------------*
+*& Report  ZFW_UPDATE_DEVICE_LOCATION
+*&
+*&---------------------------------------------------------------------*
+*&
+*&
+*&---------------------------------------------------------------------*
+REPORT ZFW_UPDATE_DEVICE_LOCATION.
+
+TABLES sscrfields.
+
+* Address CSV: UTF-8, comma-separated; header House Number,Postcode.
+TYPES: BEGIN OF ty_address_input,
+         house_num1 TYPE adrc-house_num1,
+         post_code1 TYPE adrc-post_code1,
+       END OF ty_address_input.
+
+DATA gt_addresses TYPE STANDARD TABLE OF ty_address_input
+                       WITH DEFAULT KEY.
+
+************************************************************************
+* Types
+************************************************************************
+TYPES: BEGIN OF ty_input,
+         meter_location TYPE char20,
+       END OF ty_input.
+
+DATA: ls_input TYPE ty_input.
+
+TYPES: BEGIN OF ty_upload,
+         mprn     TYPE char20,
+         location TYPE char20,
+         status   TYPE char20,
+         message  TYPE char100,
+       END OF ty_upload.
+
+DATA: gt_upload TYPE TABLE OF ty_upload,
+      gs_upload TYPE ty_upload,
+  go_cont TYPE REF TO cl_gui_custom_container,
+  go_grid TYPE REF TO cl_gui_alv_grid,
+  gt_fcat TYPE lvc_t_fcat,
+  gs_fcat TYPE lvc_s_fcat.
+
+TYPES: BEGIN OF ty_report,
+"         tplnr         TYPE iflot-tplnr,
+         ext_ui        TYPE euitrans-ext_ui,
+         anlage        TYPE eanl-anlage,
+         sernr         TYPE equi-sernr,
+         matnr         TYPE equi-matnr,
+         stort         TYPE iloa-stort,
+"         stortzus      TYPE iloa-stortzus,
+         bgljahr       TYPE egers-bgljahr,
+         vlzeitti      TYPE etyp-vlzeitti,
+         next_repyear  TYPE gjahr,
+         house_num1 TYPE ADRC-house_num1,
+         address TYPE string,
+         POST_CODE1 TYPE ADRC-POST_CODE1,
+         devloc        TYPE egerh-devloc,
+         logiknr TYPE egerh-LOGIKNR,
+       END OF ty_report.
+
+TYPE-POOLS: vrm.
+
+DATA:
+  gt_vrm TYPE vrm_values,
+  gs_vrm TYPE vrm_value.
+
+INITIALIZATION.
+
+
+  CLEAR gs_vrm.
+  gs_vrm-key  = 'Indoor'.
+  gs_vrm-text = 'Indoor'.
+  APPEND gs_vrm TO gt_vrm.
+
+  CLEAR gs_vrm.
+  gs_vrm-key  = 'Outdoor'.
+  gs_vrm-text = 'Outdoor'.
+  APPEND gs_vrm TO gt_vrm.
+
+
+CLEAR gs_fcat.
+gs_fcat-fieldname = 'MPRN'.
+gs_fcat-coltext   = 'MPRN'.
+gs_fcat-edit      = 'X'.
+gs_fcat-outputlen = 50.
+APPEND gs_fcat TO gt_fcat.
+
+CLEAR gs_fcat.
+gs_fcat-fieldname = 'LOCATION'.
+gs_fcat-coltext   = 'Meter Location'.
+gs_fcat-edit      = 'X'.
+APPEND gs_fcat TO gt_fcat.
+
+CLEAR gs_fcat.
+gs_fcat-fieldname = 'STATUS'.
+gs_fcat-coltext   = 'Status'.
+APPEND gs_fcat TO gt_fcat.
+
+CLEAR gs_fcat.
+gs_fcat-fieldname = 'MESSAGE'.
+gs_fcat-coltext   = 'Message'.
+APPEND gs_fcat TO gt_fcat.
+
+************************************************************************
+* Declorations
+************************************************************************
+DATA:
+  gt_report TYPE TABLE OF ty_report,
+  gs_report TYPE ty_report.
+
+DATA:
+  gv_repyear TYPE gjahr,
+  ls_equi TYPE equi,
+  lv_anlage TYPE eanl-anlage,
+  lv_mloc TYPE iloa-stort,
+  lv_house_num TYPE ADRC-HOUSE_NUM1.
+
+
+************************************************************************
+* Selection screen
+************************************************************************
+************************************************************************
+* Main Mode
+************************************************************************
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE text-001.
+
+PARAMETERS:
+  p_rep RADIOBUTTON GROUP rb DEFAULT 'X' USER-COMMAND rad,
+  p_upd RADIOBUTTON GROUP rb.
+
+SELECTION-SCREEN END OF BLOCK b1.
+
+************************************************************************
+* Reporting
+************************************************************************
+SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE text-002.
+
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS p_addr AS CHECKBOX USER-COMMAND adr MODIF ID REP.
+SELECTION-SCREEN COMMENT 3(35) txt_mode FOR FIELD p_addr
+  MODIF ID REP.
+SELECTION-SCREEN END OF LINE.
+
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN COMMENT 1(20) txt_file FOR FIELD p_adrfil
+  MODIF ID ADR.
+SELECTION-SCREEN POSITION 22.
+PARAMETERS p_adrfil TYPE rlgrap-filename LOWER CASE MODIF ID ADR.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN SKIP.
+
+SELECT-OPTIONS:
+  s_anlage FOR lv_anlage MODIF ID SEL,
+  s_repyr FOR gv_repyear MODIF ID SEL,
+  s_mloc FOR lv_mloc DEFAULT 'OUTDOOR' MODIF ID SEL,
+  s_hsnr FOR lv_house_num MODIF ID SEL,
+  s_postco FOR gs_report-post_code1 MODIF ID SEL.
+SELECTION-SCREEN END OF BLOCK b2.
+
+************************************************************************
+* Update Method
+************************************************************************
+SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE text-003.
+
+PARAMETERS:
+  p_alv_up RADIOBUTTON GROUP up USER-COMMAND rad MODIF ID UPD,
+  p_csv_up RADIOBUTTON GROUP up MODIF ID UPD.
+
+PARAMETERS:
+  p_csvfil TYPE rlgrap-filename MODIF ID CSV.
+
+SELECTION-SCREEN END OF BLOCK b3.
+
+SELECTION-SCREEN BEGIN OF BLOCK b4 WITH FRAME TITLE text-004.
+PARAMETERS:
+p_max TYPE i DEFAULT 500.
+SELECTION-SCREEN END OF BLOCK b4.
+
+*SELECT-OPTIONS:
+*  s_sernr FOR ls_equi-sernr MODIF ID UPD.
+* Could use m loc, to shorten load
+*PARAMETERS:
+*  lv_mloc TYPE char20 AS LISTBOX VISIBLE LENGTH 15 MODIF ID UPD.
+AT SELECTION-SCREEN OUTPUT.
+
+  txt_mode = 'Use address CSV'.
+  txt_file = 'Address CSV file'.
+
+  LOOP AT SCREEN.
+
+    CASE screen-group1.
+
+      WHEN 'REP'.
+        IF p_rep = 'X'.
+          screen-active = 1.
+        ELSE.
+          screen-active = 0.
+        ENDIF.
+
+      WHEN 'SEL'.
+        IF p_rep = 'X'.
+          screen-active = 1.
+          IF p_addr = 'X'.
+            screen-input = 0.
+          ENDIF.
+        ELSE.
+          screen-active = 0.
+        ENDIF.
+
+      WHEN 'ADR'.
+        IF p_rep = 'X' AND p_addr = 'X'.
+          screen-active = 1.
+        ELSE.
+          screen-active = 0.
+        ENDIF.
+
+      WHEN 'UPD'.
+        IF p_upd = 'X'.
+          screen-active = 1.
+        ELSE.
+          screen-active = 0.
+        ENDIF.
+
+        WHEN 'CSV'.
+        IF p_upd = 'X'
+        AND p_csv_up = 'X'.
+          screen-active = 1.
+        ELSE.
+          screen-active = 0.
+        ENDIF.
+
+    ENDCASE.
+
+    MODIFY SCREEN.
+
+  ENDLOOP.
+
+  CALL FUNCTION 'VRM_SET_VALUES'
+    EXPORTING
+      id     = 'lv_mloc'
+      values = gt_vrm.
+
+CLASS lcl_events DEFINITION.
+  PUBLIC SECTION.
+    METHODS:
+      on_link_click
+        FOR EVENT link_click OF cl_salv_events_table
+        IMPORTING row column.
+ENDCLASS.
+
+
+*INCLUDE ZFW_UPDATE_DEVICE_LOCATION_setupc01. "Classes
+
+CLASS lcl_events IMPLEMENTATION.
+
+  METHOD on_link_click.
+
+    READ TABLE gt_report INTO DATA(ls_report) INDEX row.
+
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    CASE column.
+
+      WHEN 'ANLAGE'.
+
+        SET PARAMETER ID 'ANL'
+          FIELD ls_report-anlage.
+
+        CALL TRANSACTION 'ES32'
+          AND SKIP FIRST SCREEN.
+
+    ENDCASE.
+
+  ENDMETHOD.
+
+ENDCLASS.
+
+MODULE status_0100 OUTPUT.
+
+  IF go_grid IS INITIAL.
+
+    CREATE OBJECT go_cont
+      EXPORTING
+        container_name = 'CC_ALV'.
+
+    CREATE OBJECT go_grid
+      EXPORTING
+        i_parent = go_cont.
+
+    go_grid->register_edit_event(
+      cl_gui_alv_grid=>mc_evt_modified ).
+
+    go_grid->set_ready_for_input( 1 ).
+
+    go_grid->set_table_for_first_display(
+      CHANGING
+        it_outtab       = gt_upload
+        it_fieldcatalog = gt_fcat ).
+
+  ENDIF.
+
+ENDMODULE.
+
+MODULE user_command_0100 INPUT.
+
+  CASE sy-ucomm.
+
+WHEN 'ONLI'.
+
+  go_grid->check_changed_data( ).
+
+  PERFORM update_device_locations.
+
+  go_grid->refresh_table_display( ).
+
+    WHEN 'E'
+    OR 'ECAN'
+    OR 'ENDE'.
+
+      LEAVE TO SCREEN 0.
+
+  ENDCASE.
+
+ENDMODULE.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_csvfil.
+
+  CALL FUNCTION 'F4_FILENAME'
+    IMPORTING
+      file_name = p_csvfil.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_adrfil.
+
+  CALL FUNCTION 'F4_FILENAME'
+    IMPORTING
+      file_name = p_adrfil.
+
+AT SELECTION-SCREEN.
+
+  IF sscrfields-ucomm = 'ONLI'
+     AND p_rep = 'X' AND p_addr = 'X'.
+    IF sy-batch = 'X'.
+      MESSAGE 'Address CSV upload requires an interactive SAP GUI session'
+        TYPE 'E'.
+    ENDIF.
+    IF p_adrfil IS INITIAL.
+      MESSAGE 'Select an address CSV file before executing' TYPE 'E'.
+    ENDIF.
+  ENDIF.
+
+START-OF-SELECTION.
+
+  IF p_upd = 'X'.
+
+    IF p_alv_up = 'X'.
+      CALL SCREEN 100.
+      "PERFORM update_device_locations.
+
+    ELSE.
+
+    PERFORM upload_file.
+    PERFORM update_device_locations.
+    PERFORM display_results.
+    ENDIF.
+
+
+
+  ELSEIF p_rep = 'X'.
+
+    IF p_addr = 'X'.
+      PERFORM upload_address_csv.
+    ENDIF.
+
+    PERFORM get_outside_meter_locations.
+    PERFORM display_report.
+
+  ENDIF.
+
+FORM update_device_locations.
+
+  DATA:
+    lv_tplnr         TYPE bapi_itob_parms-funcloc_int,
+    ls_general       TYPE bapi_itob,
+    ls_generalx      TYPE bapi_itobx,
+    ls_specific      TYPE bapi_itob_fl_only,
+    ls_specificx     TYPE bapi_itob_fl_onlyx,
+    ls_general_exp   TYPE bapi_itob,
+    ls_specific_exp  TYPE bapi_itob_fl_only,
+    ls_return        TYPE bapiret2,
+    lv_count         TYPE i.
+*    lv_anlage        TYPE eastl-anlage,
+*    lv_mprn          TYPE euitrans-ext_ui,
+
+LOOP AT gt_upload INTO gs_upload.
+
+  CLEAR:
+    lv_tplnr,
+    ls_return.
+
+**--------------------------------------------------------------------*
+** Find Current MPRN
+**--------------------------------------------------------------------*
+SELECT SINGLE f~tplnr
+  INTO @lv_tplnr
+  FROM egerh     AS h
+  INNER JOIN eastl     AS ea ON ea~logiknr = h~logiknr
+  INNER JOIN euiinstln AS ei ON ei~anlage  = ea~anlage
+  INNER JOIN euitrans  AS et ON et~int_ui  = ei~int_ui
+  INNER JOIN iflot     AS f  ON f~tplnr    = h~devloc
+  WHERE et~ext_ui = @gs_upload-mprn
+    AND h~bis     = '99991231'.
+
+   IF sy-subrc <> 0.
+    gs_upload-status  = 'ERROR'.
+    gs_upload-message = 'Functional location not found'.
+    MODIFY gt_upload FROM gs_upload.
+    CONTINUE.
+
+  ENDIF.
+****************
+* Retaining this code if want to find from Serial Num
+****************
+** Find current device location
+*  SELECT SINGLE h~devloc
+*    INTO @lv_tplnr
+*    FROM equi AS e
+*    INNER JOIN egerh AS h
+*      ON h~equnr = e~equnr
+*   WHERE e~sernr = @gs_upload-sernr
+*     AND h~bis   = '99991231'.
+*
+*  IF sy-subrc <> 0.
+*    gs_upload-status  = 'ERROR'.
+*    gs_upload-message = 'Serial number not found'.
+*    MODIFY gt_upload FROM gs_upload.
+*    CONTINUE.
+*
+*  ENDIF.
+*
+**--------------------------------------------------------------------*
+** Find Current MPRN
+**--------------------------------------------------------------------*
+*    SELECT SINGLE l~anlage
+*      INTO @lv_anlage
+*      FROM equi AS e
+*      INNER JOIN egerh AS h
+*        ON h~equnr = e~equnr
+*      INNER JOIN eastl AS l
+*        ON l~logiknr = h~logiknr
+*     WHERE e~sernr = @gs_upload-sernr
+*       AND h~bis   = '99991231'.
+*
+*    SELECT SINGLE t~ext_ui
+*      INTO @lv_mprn
+*      FROM EUIINSTLN AS i
+*      INNER JOIN euitrans AS t
+*        ON t~int_ui = i~int_ui
+*     WHERE i~anlage = @lv_anlage
+*       AND i~dateto = '99991231'
+*       AND t~dateto = '99991231'.
+*
+**--------------------------------------------------------------------*
+** Validate MPRN
+**--------------------------------------------------------------------*
+*    IF lv_mprn <> gs_upload-mprn.
+*
+*      gs_upload-status  = 'ERROR'.
+*      gs_upload-message = 'MPRN mismatch'.
+*
+*      MODIFY gt_upload FROM gs_upload.
+*      CONTINUE.
+*    ENDIF.
+
+  CLEAR: ls_general,
+         ls_generalx.
+
+  CASE gs_upload-location.
+
+    WHEN 'INDOOR'.
+      ls_general-maintloc = 'INDOOR'.
+
+    WHEN 'OUTDOOR'.
+      ls_general-maintloc = 'OUTDOOR'.
+
+    WHEN OTHERS.
+
+      gs_upload-status  = 'ERROR'.
+      gs_upload-message = 'Invalid location'.
+
+      MODIFY gt_upload FROM gs_upload.
+      CONTINUE.
+
+  ENDCASE.
+
+  ls_generalx-maintloc = 'X'.
+
+* Update
+  CALL FUNCTION 'BAPI_FUNCLOC_CHANGE'
+    EXPORTING
+      functlocation   = lv_tplnr
+      data_general    = ls_general
+      data_generalx   = ls_generalx
+      data_specific   = ls_specific
+      data_specificx  = ls_specificx
+    IMPORTING
+      return          = ls_return.
+
+  IF ls_return-type CA 'AEX'.
+
+    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+
+    gs_upload-status  = 'ERROR'.
+    gs_upload-message = ls_return-message.
+
+  ELSE.
+
+    CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+      EXPORTING
+        wait = 'X'.
+
+    gs_upload-status  = 'SUCCESS'.
+    gs_upload-message = 'Location updated'.
+  ENDIF.
+
+  MODIFY gt_upload FROM gs_upload.
+
+*--------------------------------------------------------------------*
+* Commit every 1000 rows
+*--------------------------------------------------------------------*
+    ADD 1 TO lv_count.
+
+    IF lv_count >= 1000.
+
+      CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+        EXPORTING
+          wait = 'X'.
+
+      CLEAR lv_count.
+
+    ENDIF.
+
+ENDLOOP.
+
+  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+    EXPORTING
+      wait = 'X'.
+
+ENDFORM.
+
+************************************************************************
+* Get Outside Meter Locations
+************************************************************************
+FORM get_outside_meter_locations .
+
+  DATA:
+    lv_next_year TYPE gjahr,
+    lv_mprn          TYPE euitrans-ext_ui,
+    lv_anlage        TYPE eastl-anlage.
+
+  CLEAR gt_report.
+
+  IF p_addr IS INITIAL.
+
+  SELECT
+      egerh~devloc,
+      equi~sernr,
+      equi~matnr,
+      iloa~stort,
+      eastl~anlage,
+"      iloa~stortzus,
+      egers~bgljahr,
+      etyp~vlzeitti,
+      adrc~post_code1,
+      adrc~house_num1,
+      adrc~street,
+      adrc~city1,
+      euitrans~ext_ui,
+      eastl~logiknr
+    INTO TABLE @DATA(lt_data)
+
+    FROM iloa
+
+    INNER JOIN adrc
+ON adrc~addrnumber = iloa~ADRNR
+    INNER JOIN iflot
+      ON iflot~iloan = iloa~iloan
+    INNER JOIN egerh
+      ON egerh~devloc = iflot~TPLNR
+      INNER JOIN eastl
+      ON eastl~LOGIKNR = egerh~LOGIKNR
+    INNER JOIN equi
+      ON equi~equnr = egerh~equnr
+    INNER JOIN egers
+      ON egers~equnr = egerh~equnr
+    INNER JOIN etyp
+      ON etyp~matnr = equi~matnr
+    INNER JOIN EUIINSTLN
+      ON EUIINSTLN~anlage = eastl~anlage
+      INNER JOIN EUITRANS
+      ON EUITRANS~int_ui = EUIINSTLN~int_ui
+
+   WHERE iloa~stort IN @s_mloc
+    AND egerh~bis = '99991231'
+    AND eastl~anlage IN @s_anlage
+    AND adrc~post_code1 IN @s_postco
+    AND adrc~house_num1 IN @s_hsnr.
+
+  ELSE.
+
+    "Never execute FOR ALL ENTRIES with an empty input table.
+    IF gt_addresses IS INITIAL.
+      MESSAGE 'No uploaded addresses available'
+        TYPE 'S' DISPLAY LIKE 'E'.
+      RETURN.
+    ENDIF.
+
+  SELECT
+      egerh~devloc,
+      equi~sernr,
+      equi~matnr,
+      iloa~stort,
+      eastl~anlage,
+"      iloa~stortzus,
+      egers~bgljahr,
+      etyp~vlzeitti,
+      adrc~post_code1,
+      adrc~house_num1,
+      adrc~street,
+      adrc~city1,
+      euitrans~ext_ui,
+      eastl~logiknr
+    INTO TABLE @lt_data
+
+    FROM iloa
+
+    INNER JOIN adrc
+ON adrc~addrnumber = iloa~ADRNR
+    INNER JOIN iflot
+      ON iflot~iloan = iloa~iloan
+    INNER JOIN egerh
+      ON egerh~devloc = iflot~TPLNR
+      INNER JOIN eastl
+      ON eastl~LOGIKNR = egerh~LOGIKNR
+    INNER JOIN equi
+      ON equi~equnr = egerh~equnr
+    INNER JOIN egers
+      ON egers~equnr = egerh~equnr
+    INNER JOIN etyp
+      ON etyp~matnr = equi~matnr
+    INNER JOIN EUIINSTLN
+      ON EUIINSTLN~anlage = eastl~anlage
+      INNER JOIN EUITRANS
+      ON EUITRANS~int_ui = EUIINSTLN~int_ui
+
+    FOR ALL ENTRIES IN @gt_addresses
+    WHERE egerh~bis = '99991231'
+      AND adrc~house_num1 = @gt_addresses-house_num1
+      AND adrc~post_code1 = @gt_addresses-post_code1.
+
+  ENDIF.
+
+    SELECT SINGLE t~ext_ui
+      INTO @lv_mprn
+      FROM EUIINSTLN AS i
+      INNER JOIN euitrans AS t
+        ON t~int_ui = i~int_ui
+     WHERE i~anlage = @lv_anlage
+       AND i~dateto = '99991231'
+       AND t~dateto = '99991231'.
+
+  LOOP AT lt_data ASSIGNING FIELD-SYMBOL(<ls_data>).
+
+    CLEAR gs_report.
+    gs_report-devloc      = <ls_data>-devloc.
+    gs_report-ext_ui      = <ls_data>-ext_ui.
+    gs_report-anlage      = <ls_data>-anlage.
+    gs_report-sernr       = <ls_data>-sernr.
+    gs_report-matnr       = <ls_data>-matnr.
+    gs_report-stort       = <ls_data>-stort.
+"    gs_report-stortzus    = <ls_data>-stortzus.
+    gs_report-bgljahr     = <ls_data>-bgljahr.
+    gs_report-vlzeitti    = <ls_data>-vlzeitti.
+    gs_report-house_num1 = <ls_data>-house_num1.
+    gs_report-address = | { <ls_data>-street }, { <ls_data>-city1 }|.
+    gs_report-POST_CODE1    = <ls_data>-POST_CODE1.
+    gs_report-next_repyear =     gs_report-bgljahr + gs_report-vlzeitti.
+    gs_report-logiknr     = <ls_data>-logiknr.
+
+          IF p_addr = 'X' OR gs_report-next_repyear IN s_repyr.
+            APPEND gs_report TO gt_report.
+          ENDIF.
+
+  ENDLOOP.
+
+ENDFORM.
+
+************************************************************************
+* Display ALV
+************************************************************************
+FORM display_report .
+
+  DATA lo_alv      TYPE REF TO cl_salv_table.
+  DATA lo_column   TYPE REF TO cl_salv_column_table.
+  DATA lo_events   TYPE REF TO cl_salv_events_table.
+  DATA lo_handler  TYPE REF TO lcl_events.
+
+* Create ALV
+  cl_salv_table=>factory(
+    IMPORTING
+      r_salv_table = lo_alv
+    CHANGING
+      t_table      = gt_report ).
+
+*lo_alv->get_columns( )->set_optimize( abap_true ).
+* toolbar
+  lo_alv->get_functions( )->set_all( abap_true ).
+
+* change column names
+  lo_column ?= lo_alv->get_columns( )->get_column( 'ADDRESS' ).
+
+  lo_column->set_short_text( 'Address' ).
+  lo_column->set_output_length( 40 ).
+
+lo_column ?=  lo_alv->get_columns( )->get_column( 'EXT_UI' ).
+
+lo_column->set_short_text( 'MPRN' ).
+lo_column->set_medium_text( 'MPRN' ).
+lo_column->set_long_text( 'MPRN' ).
+lo_column->set_output_length( 14 ).
+
+  lo_column ?= lo_alv->get_columns( )->get_column( 'NEXT_REPYEAR' ).
+  lo_column->set_long_text( 'Replacement Year' ).
+  lo_column->set_output_length( 13 ).
+
+  lo_column ?= lo_alv->get_columns( )->get_column( 'DEVLOC' ).
+  lo_column->set_output_length( 11 ).
+
+* link fields
+  lo_column ?=
+    lo_alv->get_columns( )->get_column( 'ANLAGE' ).
+
+  lo_column->set_cell_type(
+    if_salv_c_cell_type=>hotspot ).
+
+  CREATE OBJECT lo_handler.
+
+  lo_events = lo_alv->get_event( ).
+
+  SET HANDLER lo_handler->on_link_click
+    FOR lo_events.
+
+  lo_alv->display( ).
+
+ENDFORM.
+
+FORM upload_file.
+
+  DATA:
+    lt_raw  TYPE TABLE OF string,
+    lv_line TYPE string,
+    lv_filename TYPE string.
+
+  lv_filename = p_csvfil.
+
+  CALL FUNCTION 'GUI_UPLOAD'
+    EXPORTING
+      filename = lv_filename
+      filetype = 'ASC'
+*      CHECK_BOM = 'X'
+      codepage = '4110'
+    TABLES
+      data_tab = lt_raw.
+
+  DELETE lt_raw INDEX 1.
+
+  LOOP AT lt_raw INTO lv_line.
+
+    CLEAR gs_upload.
+
+    SPLIT lv_line AT ','
+      INTO gs_upload-mprn
+           gs_upload-location.
+
+    TRANSLATE gs_upload-location TO UPPER CASE.
+
+    APPEND gs_upload TO gt_upload.
+
+  ENDLOOP.
+
+ENDFORM.
+
+FORM display_results.
+
+  DATA lo_alv TYPE REF TO cl_salv_table.
+
+  cl_salv_table=>factory(
+    IMPORTING
+      r_salv_table = lo_alv
+    CHANGING
+      t_table      = gt_upload ).
+
+  lo_alv->get_functions( )->set_all( abap_true ).
+
+  lo_alv->display( ).
+
+ENDFORM.
+
+************************************************************************
+* Address lookup only: upload House Number / Postcode CSV
+* Save from Excel as CSV UTF-8 (comma delimited).
+* Required header: House Number,Postcode
+* This FORM never updates meter locations.
+************************************************************************
+FORM upload_address_csv.
+
+  DATA:
+    lt_raw       TYPE STANDARD TABLE OF string,
+    lt_cells     TYPE STANDARD TABLE OF string,
+    lt_addresses TYPE STANDARD TABLE OF ty_address_input,
+    ls_address   TYPE ty_address_input,
+    lv_filename  TYPE string,
+    lv_line      TYPE string,
+    lv_house     TYPE string,
+    lv_postcode  TYPE string,
+    lv_message   TYPE string,
+    lv_row       TYPE i,
+    lv_house_len TYPE i,
+    lv_post_len  TYPE i,
+    lv_length    TYPE i,
+    lv_last      TYPE i,
+    lv_header    TYPE abap_bool.
+
+  FIELD-SYMBOLS <lv_cell> TYPE string.
+
+  CLEAR gt_addresses.
+  lv_filename = p_adrfil.
+
+  IF sy-batch = 'X' OR lv_filename IS INITIAL.
+    MESSAGE 'Select a local address CSV file in SAP GUI' TYPE 'E'.
+  ENDIF.
+
+  CALL FUNCTION 'GUI_UPLOAD'
+    EXPORTING
+      filename                = lv_filename
+      filetype                = 'ASC'
+      codepage                = '4110'
+    TABLES
+      data_tab                = lt_raw
+    EXCEPTIONS
+      file_open_error         = 1
+      file_read_error         = 2
+      no_batch                = 3
+      gui_refuse_filetransfer  = 4
+      invalid_type            = 5
+      no_authority            = 6
+      OTHERS                  = 7.
+
+  IF sy-subrc <> 0.
+    MESSAGE 'Address CSV upload failed; check the file and GUI access'
+      TYPE 'E'.
+  ENDIF.
+
+  DESCRIBE FIELD ls_address-house_num1
+    LENGTH lv_house_len IN CHARACTER MODE.
+  DESCRIBE FIELD ls_address-post_code1
+    LENGTH lv_post_len IN CHARACTER MODE.
+
+  LOOP AT lt_raw INTO lv_line.
+    lv_row = sy-tabix.
+    IF lv_line IS INITIAL.
+      CONTINUE.
+    ENDIF.
+
+    CLEAR: lt_cells, lv_house, lv_postcode, ls_address.
+    SPLIT lv_line AT ',' INTO TABLE lt_cells.
+
+    IF lines( lt_cells ) <> 2.
+      lv_message =
+        |CSV row { lv_row }: expected two comma-separated columns|.
+      MESSAGE lv_message TYPE 'E'.
+    ENDIF.
+
+    "Allow optional enclosing quotes; embedded commas/quotes are invalid
+    "for these two address-key fields.
+    LOOP AT lt_cells ASSIGNING <lv_cell>.
+      CONDENSE <lv_cell>.
+      lv_length = strlen( <lv_cell> ).
+      IF lv_length >= 2.
+        lv_last = lv_length - 1.
+        IF <lv_cell>(1) = '"' AND <lv_cell>+lv_last(1) = '"'.
+          lv_length = lv_length - 2.
+          <lv_cell> = <lv_cell>+1(lv_length).
+        ENDIF.
+      ENDIF.
+      IF <lv_cell> CS '"'.
+        lv_message = |CSV row { lv_row }: invalid quotation marks|.
+        MESSAGE lv_message TYPE 'E'.
+      ENDIF.
+      CONDENSE <lv_cell>.
+    ENDLOOP.
+
+    READ TABLE lt_cells INTO lv_house INDEX 1.
+    READ TABLE lt_cells INTO lv_postcode INDEX 2.
+
+    IF lv_house IS INITIAL AND lv_postcode IS INITIAL.
+      CONTINUE.
+    ENDIF.
+
+    IF lv_header IS INITIAL.
+      TRANSLATE lv_house TO UPPER CASE.
+      TRANSLATE lv_postcode TO UPPER CASE.
+      CONDENSE lv_house NO-GAPS.
+      CONDENSE lv_postcode NO-GAPS.
+      "CP also tolerates a UTF-8 BOM retained before the first heading.
+      IF lv_house NP '*HOUSENUMBER' OR lv_postcode <> 'POSTCODE'.
+        MESSAGE 'CSV header must be House Number,Postcode' TYPE 'E'.
+      ENDIF.
+      lv_header = abap_true.
+      CONTINUE.
+    ENDIF.
+
+    TRANSLATE lv_postcode TO UPPER CASE.
+
+    IF lv_house IS INITIAL OR lv_postcode IS INITIAL.
+      lv_message =
+        |CSV row { lv_row }: house number and postcode are required|.
+      MESSAGE lv_message TYPE 'E'.
+    ENDIF.
+
+    IF strlen( lv_house ) > lv_house_len
+       OR strlen( lv_postcode ) > lv_post_len.
+      lv_message = |CSV row { lv_row }: value exceeds SAP field length|.
+      MESSAGE lv_message TYPE 'E'.
+    ENDIF.
+
+    ls_address-house_num1 = lv_house.
+    ls_address-post_code1 = lv_postcode.
+    APPEND ls_address TO lt_addresses.
+  ENDLOOP.
+
+  IF lt_addresses IS INITIAL.
+    MESSAGE 'CSV contains no address data rows' TYPE 'E'.
+  ENDIF.
+
+  gt_addresses = lt_addresses.
+
+ENDFORM.
