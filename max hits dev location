@@ -1,3 +1,9 @@
+IF lines( lt_data ) >= p_max.
+
+  MESSAGE 'Maximum number of hits reached. Results may be incomplete.'
+    TYPE 'I' DISPLAY LIKE 'W'.
+
+ENDIF.
 *&---------------------------------------------------------------------*
 *& Report  ZFW_UPDATE_DEVICE_LOCATION
 *&
